@@ -17,7 +17,8 @@ try
             GetEnvironmentVariable("REDIS_HOST")!,
             int.Parse(GetEnvironmentVariable("REDIS_PORT")!),
             GetEnvironmentVariable("REDIS_USERNAME"),
-            GetEnvironmentVariable("REDIS_PASSWORD")
+            GetEnvironmentVariable("REDIS_PASSWORD"),
+            int.Parse(GetEnvironmentVariable("RATE_LIMIT_SECONDS") ?? "300")
         )
     );
 
@@ -29,9 +30,11 @@ try
 
     app.MapGet(
         "/servers/{serverId}/image",
-        async (HttpContext context, IMemoryCache cache, [FromRoute] ulong serverId, [FromServices] Database database) =>
+        async (HttpContext context, [FromServices] IMemoryCache cache, [FromServices] Database database, [FromRoute] ulong serverId) =>
         {
-            IEnumerable<ulong> serverIds = await GetServerIds(context, cache);
+            string? userToken = GetUserToken(context);
+            if (userToken == null) return Results.Unauthorized();
+            IEnumerable<ulong> serverIds = await GetServerIds(userToken, cache);
 
             return !serverIds.Contains(serverId)
                 ? Results.Unauthorized()
@@ -41,10 +44,11 @@ try
 
     app.MapGet(
         "/servers/{serverId}/ws",
-        async (HttpContext context, IMemoryCache cache, [FromRoute] ulong serverId, [FromServices] Database database) =>
+        async (HttpContext context, [FromServices] IMemoryCache cache, [FromServices] Database database, [FromRoute] ulong serverId) =>
         {
-            IEnumerable<ulong> serverIds = await GetServerIds(context, cache);
-
+            string? userToken = GetUserToken(context);
+            if (userToken == null) return Results.Unauthorized();
+            IEnumerable<ulong> serverIds = await GetServerIds(userToken, cache);
             if (!serverIds.Contains(serverId))
                 return Results.Unauthorized();
 
@@ -71,7 +75,8 @@ try
                     while (!token.IsCancellationRequested)
                     {
                         Pixel pixel = await receiver.ReceivePixel(token);
-                        await database.SetPixel(serverId, pixel);
+                        if (!await database.GetOnCooldown(serverId, userToken))
+                            await database.SetPixel(serverId, pixel);
                     }
 
                     await database.StopPixelUpdates(subscriber);
@@ -81,7 +86,6 @@ try
                     cts.Cancel();
                 }
             }
-
 
             return Results.NoContent();
         }
@@ -95,15 +99,20 @@ catch (Exception e)
     throw;
 }
 
-static async Task<IEnumerable<ulong>> GetServerIds(HttpContext context, IMemoryCache cache)
+static string? GetUserToken(HttpContext context)
 {
     // Make sure auth headers are provided in the http context.
-    if (context.Request.Headers.Authorization.Count == 0) return Enumerable.Empty<ulong>();
+    if (context.Request.Headers.Authorization.Count == 0) return null;
     string[]? authValuesMaybe = context.Request.Headers.Authorization[0]?.Split(' ').ToArray();
 
     if (authValuesMaybe is not { } authValues || authValues.Length < 2 || authValues[0] is not "Bearer" ||
-        authValues[1] is not { } token) return Enumerable.Empty<ulong>();
+        authValues[1] is not { } token) return null;
 
+    return token;
+}
+
+static async Task<IEnumerable<ulong>> GetServerIds(string token, IMemoryCache cache)
+{
     // Check the cache for an existing list, to save on http requests.
     if (!cache.TryGetValue(token, out ulong[]? servers))
     {
