@@ -131,14 +131,20 @@ static async Task<IEnumerable<ulong>> GetServerIds(string token, IMemoryCache ca
         HttpResponseMessage response = await httpClient.GetAsync("/api/users/@me/guilds");
 
         // Throw if discord does not like the request.
-        response.EnsureSuccessStatusCode();
+        if (response.IsSuccessStatusCode)
+        {
+            // Parse and read the server ids from the response.
+            string body = await response.Content.ReadAsStringAsync();
+            servers = JsonSerializer.Deserialize<List<Server>>(body)!.Select(server => ulong.Parse(server.Id)).ToArray();
 
-        // Parse and read the server ids from the response.
-        string body = await response.Content.ReadAsStringAsync();
-        servers = JsonSerializer.Deserialize<List<Server>>(body)!.Select(server => ulong.Parse(server.Id)).ToArray();
-
-        // Add these ids to the cache for 5 minutes.
-        cache.Set(token, servers, new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromMinutes(5)));
+            // Add these ids to the cache for 5 minutes.
+            cache.Set(token, servers, new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromMinutes(5)));
+        }
+        else
+        {
+            // If the request failed, store null (as this token does not have permission to anything).
+            cache.Set(token, (ulong[]?)null, new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromHours(1)));
+        }
     }
 
     // Return the ids. Or none, indicating no permissions.
