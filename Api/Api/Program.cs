@@ -71,10 +71,12 @@ try
         ) =>
         {
             string? userToken = GetUserToken(context);
-            if (userToken == null) return Results.Unauthorized();
-            IEnumerable<ulong> serverIds = await GetServerIds(userToken, cache);
-            if (!serverIds.Contains(serverId))
-                return Results.Unauthorized();
+            if (userToken != null)
+            {
+                IEnumerable<ulong> serverIds = await GetServerIds(userToken, cache);
+                if (!serverIds.Contains(serverId))
+                    return Results.Unauthorized();
+            }
 
             if (context.WebSockets.IsWebSocketRequest)
             {
@@ -83,8 +85,18 @@ try
                 try
                 {
                     using WebSocket socket = await context.WebSockets.AcceptWebSocketAsync();
-
+                    WebSocketReceiver receiver = new(socket);
                     CancellationToken token = cts.Token;
+
+                    // If not authorized using headers, receive a token from the websocket.
+                    if (userToken == null)
+                    {
+                        userToken = await receiver.ReceiveToken(token);
+                        IEnumerable<ulong> serverIds = await GetServerIds(userToken, cache);
+                        if (!serverIds.Contains(serverId))
+                            return Results.Unauthorized();
+                    }
+
 
                     ISubscriber subscriber = await database.GetPixelUpdates(
                         serverId,
@@ -95,7 +107,6 @@ try
                         }
                     );
 
-                    WebSocketReceiver receiver = new (socket);
                     while (!token.IsCancellationRequested)
                     {
                         Pixel pixel = await receiver.ReceivePixel(token);
