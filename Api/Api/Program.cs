@@ -22,7 +22,7 @@ try
         )
     );
 
-    builder.Services.AddMemoryCache();
+    services.AddMemoryCache();
 
     WebApplication app = builder.Build();
 
@@ -30,7 +30,12 @@ try
 
     app.MapGet(
         "/servers/{serverId}/image",
-        async (HttpContext context, [FromServices] IMemoryCache cache, [FromServices] Database database, [FromRoute] ulong serverId) =>
+        async (
+            HttpContext context,
+            [FromServices] IMemoryCache cache,
+            [FromServices] Database database,
+            [FromRoute] ulong serverId
+        ) =>
         {
             string? userToken = GetUserToken(context);
             if (userToken == null) return Results.Unauthorized();
@@ -44,7 +49,12 @@ try
 
     app.MapGet(
         "/servers/{serverId}/ws",
-        async (HttpContext context, [FromServices] IMemoryCache cache, [FromServices] Database database, [FromRoute] ulong serverId) =>
+        async (
+            HttpContext context,
+            [FromServices] IMemoryCache cache,
+            [FromServices] Database database,
+            [FromRoute] ulong serverId
+        ) =>
         {
             string? userToken = GetUserToken(context);
             if (userToken == null) return Results.Unauthorized();

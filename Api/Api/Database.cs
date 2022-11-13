@@ -40,7 +40,7 @@ public class Database
         await database.ExecuteAsync("BITFIELD", (RedisKey)imageKey, "SET", "u8", $"#{offset}", pixel.Color.ToString());
 
         RedisChannel pubSubChannel = GetPubSubChannel(serverId);
-        await database.PublishAsync(pubSubChannel, new RedisValue(pixel.GetString()));
+        await database.PublishAsync(pubSubChannel, RedisValue.Unbox(pixel.GetBytes()));
     }
 
     public async Task<ISubscriber> GetPixelUpdates(ulong serverId, Func<Pixel, Task> callback)
@@ -50,7 +50,7 @@ public class Database
         RedisChannel pubSubChannel = GetPubSubChannel(serverId);
 
         ChannelMessageQueue channel = await subscriber.SubscribeAsync(pubSubChannel);
-        channel.OnMessage(async (channelMessage) => await callback(Pixel.FromString(channelMessage.Message!)));
+        channel.OnMessage(async (channelMessage) => await callback(Pixel.FromBytes((byte[])channelMessage.Message.Box()!)));
 
         return subscriber;
     }
