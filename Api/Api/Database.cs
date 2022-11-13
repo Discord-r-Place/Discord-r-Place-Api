@@ -72,7 +72,7 @@ public class Database
         RedisValue result = await database.StringGetAsync(rateLimitKey);
         if (result.HasValue) return true;
 
-        await database.StringSetAsync(rateLimitKey, "Limit", TimeSpan.FromSeconds(_rateLimitSeconds));
+        if (_rateLimitSeconds != 0) await database.StringSetAsync(rateLimitKey, "Limit", TimeSpan.FromSeconds(_rateLimitSeconds));
         return false;
     }
 
