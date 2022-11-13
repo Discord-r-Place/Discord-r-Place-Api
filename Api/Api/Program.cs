@@ -7,6 +7,8 @@ using Microsoft.Extensions.Caching.Memory;
 using StackExchange.Redis;
 using static System.Environment;
 
+const string corsPolicy = "cors";
+
 try
 {
     WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
@@ -24,7 +26,19 @@ try
 
     services.AddMemoryCache();
 
+    services.AddCors(
+        options =>
+        {
+            options.AddPolicy(
+                corsPolicy,
+                configure => { configure.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod(); }
+            );
+        }
+    );
+
     WebApplication app = builder.Build();
+
+    app.UseCors(corsPolicy);
 
     app.UseWebSockets();
 
