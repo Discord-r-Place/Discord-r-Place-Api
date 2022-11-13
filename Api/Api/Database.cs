@@ -30,17 +30,77 @@ public class Database
         return (byte[])newValue.Box()!;
     }
 
-    public async Task SetPixel(ulong serverId, Pixel pixel)
+    public async Task SetPixel(ulong serverId, ulong userId, Pixel pixel)
     {
         IDatabase database = _redis.GetDatabase();
 
-        string imageKey = GetImageKey(serverId);
+        int offset = pixel.Y * Width + pixel.X;
 
-        int offset = DimensionsHeaderSize + pixel.Y * Width + pixel.X;
-        await database.ExecuteAsync("BITFIELD", (RedisKey)imageKey, "SET", "u8", $"#{offset}", pixel.Color.ToString());
+        ITransaction transaction = database.CreateTransaction();
+        Task<RedisResult> colorTask = transaction.ExecuteAsync(
+            "BITFIELD",
+            (RedisKey)GetImageKey(serverId),
+            "SET",
+            "u8",
+            $"#{DimensionsHeaderSize + offset}",
+            pixel.Color.ToString()
+        );
+        // ulong is currently not supported by redis.
+        Task<RedisResult> logTask1 = transaction.ExecuteAsync(
+            "BITFIELD",
+            (RedisKey)GetLogKey(serverId),
+            "SET",
+            "u32",
+            $"#{offset}",
+            (uint)(userId >> 32)
+        );
+        Task<RedisResult> logTask2 = transaction.ExecuteAsync(
+            "BITFIELD",
+            (RedisKey)GetLogKey(serverId),
+            "SET",
+            "u32",
+            $"#{offset + 1}",
+            (uint)(userId & 0xFFFFFFFF)
+        );
+
+        await transaction.ExecuteAsync();
+
+        await Task.WhenAll(colorTask, logTask1, logTask2);
 
         RedisChannel pubSubChannel = GetPubSubChannel(serverId);
         await database.PublishAsync(pubSubChannel, pixel.GetBytes());
+    }
+
+    public async Task<ulong?> GetPixelUser(ulong serverId, ushort x, ushort y)
+    {
+        IDatabase database = _redis.GetDatabase();
+        int offset = y * Width + x;
+
+        ITransaction transaction = database.CreateTransaction();
+        Task<RedisResult> logTask1 = transaction.ExecuteAsync(
+            "BITFIELD",
+            (RedisKey)GetLogKey(serverId),
+            "GET",
+            "u32",
+            $"#{offset}"
+        );
+        Task<RedisResult> logTask2 = transaction.ExecuteAsync(
+            "BITFIELD",
+            (RedisKey)GetLogKey(serverId),
+            "GET",
+            "u32",
+            $"#{offset + 1}"
+        );
+        await transaction.ExecuteAsync();
+
+        RedisResult[] logTasks = await Task.WhenAll(logTask1, logTask2);
+
+        ulong log1 = (ulong)logTasks[0];
+        ulong log2 = (ulong)logTasks[1];
+        ulong userId = (log1 << 32) + log2;
+
+        if (userId == 0) return null;
+        return userId;
     }
 
     public async Task<ISubscriber> GetPixelUpdates(ulong serverId, Func<Pixel, Task> callback)
@@ -65,6 +125,8 @@ public class Database
     // Potentially should not use the token, but they seem to be consistent across requests.
     public async Task<bool> GetOnCooldown(ulong serverId, string token)
     {
+        if (_rateLimitSeconds == 0) return false;
+
         IDatabase database = _redis.GetDatabase();
 
         string rateLimitKey = GetRateLimitKey(serverId, token);
@@ -72,24 +134,25 @@ public class Database
         RedisValue result = await database.StringGetAsync(rateLimitKey);
         if (result.HasValue) return true;
 
-        if (_rateLimitSeconds != 0) await database.StringSetAsync(rateLimitKey, "Limit", TimeSpan.FromSeconds(_rateLimitSeconds));
+        await database.StringSetAsync(rateLimitKey, "Limit", TimeSpan.FromSeconds(_rateLimitSeconds));
         return false;
     }
 
     private static string GetImageKey(ulong serverId) => $"server:{serverId}:image";
+    private static string GetLogKey(ulong serverId) => $"server:{serverId}:log";
     private static string GetRateLimitKey(ulong serverId, string token) => $"server:{serverId}:user:{token}";
 
     private static RedisChannel GetPubSubChannel(ulong serverId) =>
         new ($"server:{serverId}:pubsub", RedisChannel.PatternMode.Literal);
 
     // TODO make variable.
-    private const short Width = 1920;
-    private const short Height = 1080;
+    private const ushort Width = 1920;
+    private const ushort Height = 1080;
     private const int DimensionsHeaderSize = 4;
 
     private static readonly byte[] DefaultImage = GetDefaultImage(Width, Height);
 
-    private static byte[] GetDefaultImage(short width, short height)
+    private static byte[] GetDefaultImage(ushort width, ushort height)
     {
         byte[] buffer = new byte[DimensionsHeaderSize + width * height];
         buffer[0] = (byte)(width >> 8);

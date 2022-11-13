@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Api;
+namespace Api.Types;
 
 public record Server(
     [property: JsonPropertyName("id")] string Id,

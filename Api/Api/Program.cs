@@ -1,9 +1,6 @@
-using System.Net.Http.Headers;
 using System.Net.WebSockets;
-using System.Text.Json;
 using Api;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Caching.Memory;
 using StackExchange.Redis;
 using static System.Environment;
 
@@ -24,7 +21,7 @@ try
         )
     );
 
-    services.AddMemoryCache();
+    services.AddSingleton<DiscordClient>();
 
     services.AddCors(
         options =>
@@ -46,18 +43,53 @@ try
         "/servers/{serverId}/image",
         async (
             HttpContext context,
-            [FromServices] IMemoryCache cache,
+            [FromServices] DiscordClient discordClient,
             [FromServices] Database database,
             [FromRoute] ulong serverId
         ) =>
         {
-            string? userToken = GetUserToken(context);
-            if (userToken == null) return Results.Unauthorized();
-            IEnumerable<ulong> serverIds = await GetServerIds(userToken, cache);
+            try
+            {
+                string? userToken = GetUserToken(context);
+                if (userToken == null) return Results.Unauthorized();
+                IEnumerable<ulong> serverIds = await discordClient.GetServerIds(userToken);
 
-            return !serverIds.Contains(serverId)
-                ? Results.Unauthorized()
-                : Results.File(await database.GetImage(serverId), "application/octet-stream");
+                return !serverIds.Contains(serverId)
+                    ? Results.Unauthorized()
+                    : Results.File(await database.GetImage(serverId), "application/octet-stream");
+            }
+            catch (UnauthorizedException)
+            {
+                return Results.Unauthorized();
+            }
+        }
+    );
+
+    app.MapGet(
+        "/servers/{serverId}/user/{x}/{y}",
+        async (
+            HttpContext context,
+            [FromServices] DiscordClient discordClient,
+            [FromServices] Database database,
+            [FromRoute] ulong serverId,
+            [FromRoute] ushort x,
+            [FromRoute] ushort y
+        ) =>
+        {
+            try
+            {
+                string? userToken = GetUserToken(context);
+                if (userToken == null) return Results.Unauthorized();
+                IEnumerable<ulong> serverIds = await discordClient.GetServerIds(userToken);
+
+                return !serverIds.Contains(serverId)
+                    ? Results.Unauthorized()
+                    : Results.Text((await database.GetPixelUser(serverId, x, y)).ToString());
+            }
+            catch (UnauthorizedException)
+            {
+                return Results.Unauthorized();
+            }
         }
     );
 
@@ -65,38 +97,41 @@ try
         "/servers/{serverId}/ws",
         async (
             HttpContext context,
-            [FromServices] IMemoryCache cache,
+            [FromServices] DiscordClient discordClient,
             [FromServices] Database database,
             [FromRoute] ulong serverId
         ) =>
         {
-            string? userToken = GetUserToken(context);
-            if (userToken != null)
+            try
             {
-                IEnumerable<ulong> serverIds = await GetServerIds(userToken, cache);
-                if (!serverIds.Contains(serverId))
-                    return Results.Unauthorized();
-            }
+                string? userToken = GetUserToken(context);
+                if (userToken != null)
+                {
+                    IEnumerable<ulong> serverIds = await discordClient.GetServerIds(userToken);
+                    if (!serverIds.Contains(serverId))
+                        return Results.Unauthorized();
+                }
 
-            if (context.WebSockets.IsWebSocketRequest)
-            {
+                if (!context.WebSockets.IsWebSocketRequest) return Results.BadRequest("Use websocket");
+
                 CancellationTokenSource cts = new ();
 
                 try
                 {
                     using WebSocket socket = await context.WebSockets.AcceptWebSocketAsync();
-                    WebSocketReceiver receiver = new(socket);
+                    WebSocketReceiver receiver = new (socket);
                     CancellationToken token = cts.Token;
 
                     // If not authorized using headers, receive a token from the websocket.
                     if (userToken == null)
                     {
                         userToken = await receiver.ReceiveToken(token);
-                        IEnumerable<ulong> serverIds = await GetServerIds(userToken, cache);
+                        IEnumerable<ulong> serverIds = await discordClient.GetServerIds(userToken);
                         if (!serverIds.Contains(serverId))
                             return Results.Unauthorized();
                     }
 
+                    ulong userId = await discordClient.GetUserId(userToken);
 
                     ISubscriber subscriber = await database.GetPixelUpdates(
                         serverId,
@@ -111,7 +146,7 @@ try
                     {
                         Pixel pixel = await receiver.ReceivePixel(token);
                         if (!await database.GetOnCooldown(serverId, userToken))
-                            await database.SetPixel(serverId, pixel);
+                            await database.SetPixel(serverId, userId, pixel);
                     }
 
                     await database.StopPixelUpdates(subscriber);
@@ -120,9 +155,13 @@ try
                 {
                     cts.Cancel();
                 }
-            }
 
-            return Results.NoContent();
+                return Results.NoContent();
+            }
+            catch (UnauthorizedException)
+            {
+                return Results.Unauthorized();
+            }
         }
     );
 
@@ -144,34 +183,4 @@ static string? GetUserToken(HttpContext context)
         authValues[1] is not { } token) return null;
 
     return token;
-}
-
-static async Task<IEnumerable<ulong>> GetServerIds(string token, IMemoryCache cache)
-{
-    // Check the cache for an existing list, to save on http requests.
-    if (!cache.TryGetValue(token, out ulong[]? servers))
-    {
-        using HttpClient httpClient = new () { BaseAddress = new Uri("https://discord.com/") };
-        httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        HttpResponseMessage response = await httpClient.GetAsync("/api/users/@me/guilds");
-
-        // Throw if discord does not like the request.
-        if (response.IsSuccessStatusCode)
-        {
-            // Parse and read the server ids from the response.
-            string body = await response.Content.ReadAsStringAsync();
-            servers = JsonSerializer.Deserialize<List<Server>>(body)!.Select(server => ulong.Parse(server.Id)).ToArray();
-
-            // Add these ids to the cache for 5 minutes.
-            cache.Set(token, servers, new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromMinutes(5)));
-        }
-        else
-        {
-            // If the request failed, store null (as this token does not have permission to anything).
-            cache.Set(token, (ulong[]?)null, new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromHours(1)));
-        }
-    }
-
-    // Return the ids. Or none, indicating no permissions.
-    return servers ?? Enumerable.Empty<ulong>();
 }
