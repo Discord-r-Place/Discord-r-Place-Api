@@ -23,7 +23,7 @@ public class Database
         RedisValue oldValue = await database.StringGetAsync(imageKey);
 
         if (oldValue.HasValue) return (byte[])oldValue.Box()!;
-        await database.StringSetAsync(imageKey, new RedisValue(DefaultImage));
+        await database.StringSetAsync(imageKey, RedisValue.Unbox(DefaultImage));
 
         RedisValue newValue = await database.StringGetAsync(imageKey);
 
@@ -36,7 +36,7 @@ public class Database
 
         string imageKey = GetImageKey(serverId);
 
-        int offset = pixel.Y * Width + pixel.X;
+        int offset = DimensionsHeaderSize + pixel.Y * Width + pixel.X;
         await database.ExecuteAsync("BITFIELD", (RedisKey)imageKey, "SET", "u8", $"#{offset}", pixel.Color.ToString());
 
         RedisChannel pubSubChannel = GetPubSubChannel(serverId);
@@ -50,7 +50,9 @@ public class Database
         RedisChannel pubSubChannel = GetPubSubChannel(serverId);
 
         ChannelMessageQueue channel = await subscriber.SubscribeAsync(pubSubChannel);
-        channel.OnMessage(async (channelMessage) => await callback(Pixel.FromBytes((byte[])channelMessage.Message.Box()!)));
+        channel.OnMessage(
+            async channelMessage => await callback(Pixel.FromBytes((byte[])channelMessage.Message.Box()!))
+        );
 
         return subscriber;
     }
@@ -70,22 +72,30 @@ public class Database
         RedisValue result = await database.StringGetAsync(rateLimitKey);
         if (result.HasValue) return true;
 
-        await database.StringSetAsync(
-            rateLimitKey,
-            new RedisValue("Limit"),
-            TimeSpan.FromSeconds(_rateLimitSeconds)
-        );
+        await database.StringSetAsync(rateLimitKey, new RedisValue("Limit"), TimeSpan.FromSeconds(_rateLimitSeconds));
         return false;
     }
 
     private static string GetImageKey(ulong serverId) => $"server:{serverId}:image";
     private static string GetRateLimitKey(ulong serverId, string token) => $"server:{serverId}:user:{token}";
+
     private static RedisChannel GetPubSubChannel(ulong serverId) =>
         new ($"server:{serverId}:pubsub", RedisChannel.PatternMode.Literal);
 
     // TODO make variable.
-    private const int Width = 1920;
-    private const int Height = 1080;
+    private const short Width = 1920;
+    private const short Height = 1080;
+    private const int DimensionsHeaderSize = 4;
 
-    private static readonly string DefaultImage = System.Text.Encoding.ASCII.GetString(new byte[Width * Height]);
+    private static readonly byte[] DefaultImage = GetDefaultImage(Width, Height);
+
+    private static byte[] GetDefaultImage(short width, short height)
+    {
+        byte[] buffer = new byte[DimensionsHeaderSize + width * height];
+        buffer[0] = (byte)(width >> 8);
+        buffer[1] = (byte)(width & 0xff);
+        buffer[2] = (byte)(height >> 8);
+        buffer[3] = (byte)(height & 0xff);
+        return buffer;
+    }
 }

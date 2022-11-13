@@ -41,11 +41,9 @@ try
             if (userToken == null) return Results.Unauthorized();
             IEnumerable<ulong> serverIds = await GetServerIds(userToken, cache);
 
-            if (!serverIds.Contains(serverId))
-                return Results.Unauthorized();
-
-            context.Response.Headers.Add("X-Size", "1920x1080");
-            return Results.File(await database.GetImage(serverId), "application/octet-stream");
+            return !serverIds.Contains(serverId)
+                ? Results.Unauthorized()
+                : Results.File(await database.GetImage(serverId), "application/octet-stream");
         }
     );
 
