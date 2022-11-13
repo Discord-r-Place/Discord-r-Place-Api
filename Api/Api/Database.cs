@@ -23,7 +23,7 @@ public class Database
         RedisValue oldValue = await database.StringGetAsync(imageKey);
 
         if (oldValue.HasValue) return (byte[])oldValue.Box()!;
-        await database.StringSetAsync(imageKey, RedisValue.Unbox(DefaultImage));
+        await database.StringSetAsync(imageKey, DefaultImage);
 
         RedisValue newValue = await database.StringGetAsync(imageKey);
 
@@ -40,7 +40,7 @@ public class Database
         await database.ExecuteAsync("BITFIELD", (RedisKey)imageKey, "SET", "u8", $"#{offset}", pixel.Color.ToString());
 
         RedisChannel pubSubChannel = GetPubSubChannel(serverId);
-        await database.PublishAsync(pubSubChannel, RedisValue.Unbox(pixel.GetBytes()));
+        await database.PublishAsync(pubSubChannel, pixel.GetBytes());
     }
 
     public async Task<ISubscriber> GetPixelUpdates(ulong serverId, Func<Pixel, Task> callback)
@@ -72,7 +72,7 @@ public class Database
         RedisValue result = await database.StringGetAsync(rateLimitKey);
         if (result.HasValue) return true;
 
-        await database.StringSetAsync(rateLimitKey, new RedisValue("Limit"), TimeSpan.FromSeconds(_rateLimitSeconds));
+        await database.StringSetAsync(rateLimitKey, "Limit", TimeSpan.FromSeconds(_rateLimitSeconds));
         return false;
     }
 
