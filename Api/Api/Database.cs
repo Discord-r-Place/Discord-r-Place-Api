@@ -65,6 +65,11 @@ public class Database
     {
         IDatabase database = _redis.GetDatabase();
 
+        long length = await database.StringLengthAsync(GetPaletteKey(serverId));
+        
+        // Prevent invalid palette indexes
+        if(pixel.Color >= length / 3) return;
+
         int offset = pixel.Y * Width + pixel.X;
 
         ITransaction transaction = database.CreateTransaction();
