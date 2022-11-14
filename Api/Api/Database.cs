@@ -30,6 +30,38 @@ public class Database
         return (byte[])newValue.Box()!;
     }
 
+    public async Task<uint[]> GetPalette(ulong serverId)
+    {
+        IDatabase database = _redis.GetDatabase();
+
+        string paletteKey = GetPaletteKey(serverId);
+        RedisValue oldValue = await database.StringGetAsync(paletteKey);
+
+        if (oldValue.HasValue)
+        {
+            byte[] val = (byte[])oldValue.Box()!;
+            uint[] palette = new uint[val.Length / 3];
+            
+            for (int i = 0; i < palette.Length; i++)
+            {
+                palette[i] = (uint)(val[i * 3] << 16 | val[i * 3 + 1] << 8 | val[i * 3 + 2]);
+            }
+            
+            return palette;
+        }
+
+        ITransaction transaction = database.CreateTransaction();
+        var tasks = DefaultPalette.Select((v, i) =>
+            transaction.ExecuteAsync("BITFIELD", paletteKey, "SET", "u24", i * 24, v & 0x00FFFFFF));
+        await transaction.ExecuteAsync();
+
+        await Task.WhenAll(tasks);
+
+        RedisValue newValue = await database.StringGetAsync(paletteKey);
+
+        return (uint[])newValue.Box()!;
+    }
+
     public async Task SetPixel(ulong serverId, ulong userId, Pixel pixel)
     {
         IDatabase database = _redis.GetDatabase();
@@ -139,11 +171,11 @@ public class Database
     }
 
     private static string GetImageKey(ulong serverId) => $"server:{serverId}:image";
+    private static string GetPaletteKey(ulong serverId) => $"server:{serverId}:palette";
     private static string GetLogKey(ulong serverId) => $"server:{serverId}:log";
     private static string GetRateLimitKey(ulong serverId, string token) => $"server:{serverId}:user:{token}";
 
-    private static RedisChannel GetPubSubChannel(ulong serverId) =>
-        new ($"server:{serverId}:pubsub", RedisChannel.PatternMode.Literal);
+    private static RedisChannel GetPubSubChannel(ulong serverId) => new($"server:{serverId}:pubsub", RedisChannel.PatternMode.Literal);
 
     // TODO make variable.
     private const ushort Width = 1920;
@@ -151,6 +183,9 @@ public class Database
     private const int DimensionsHeaderSize = 4;
 
     private static readonly byte[] DefaultImage = GetDefaultImage(Width, Height);
+
+    private static readonly uint[] DefaultPalette =
+        { 0xFFFFFF, 0, 0xFF0000, 0x00FF00, 0x0000FF, 0xFFFF00, 0xFF00FF, 0x00FFFF };
 
     private static byte[] GetDefaultImage(ushort width, ushort height)
     {
