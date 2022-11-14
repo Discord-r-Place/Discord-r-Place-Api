@@ -51,15 +51,14 @@ public class Database
         }
 
         ITransaction transaction = database.CreateTransaction();
-        var tasks = DefaultPalette.Select((v, i) =>
-            transaction.ExecuteAsync("BITFIELD", paletteKey, "SET", "u24", i * 24, v & 0x00FFFFFF));
-        await transaction.ExecuteAsync();
+        var tasks = DefaultPalette.Select((v, i) => 
+            transaction.ExecuteAsync("BITFIELD", paletteKey, "SET", "u24", i * 24, v & 0x00FFFFFF)).ToArray();
+        if (await transaction.ExecuteAsync())
+        {
+            await Task.WhenAll(tasks);
+        }
 
-        await Task.WhenAll(tasks);
-
-        RedisValue newValue = await database.StringGetAsync(paletteKey);
-
-        return (uint[])newValue.Box()!;
+        return DefaultPalette;
     }
 
     public async Task SetPixel(ulong serverId, ulong userId, Pixel pixel)
