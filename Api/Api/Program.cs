@@ -100,6 +100,25 @@ try
             }
         }
     );
+    
+    app.MapGet(
+        "/servers/{serverId}/palette",
+        async (
+            HttpContext context,
+            [FromServices] DiscordClient discordClient,
+            [FromServices] Database database,
+            [FromRoute] ulong serverId
+        ) =>
+        {
+            string? userToken = GetUserToken(context);
+            if (userToken == null) return Results.Unauthorized();
+            IEnumerable<ulong> serverIds = await discordClient.GetServerIds(userToken);
+
+            return !serverIds.Contains(serverId) 
+                ? Results.Unauthorized() 
+                : Results.Json(await database.GetPalette(serverId));
+        }
+    );
 
     app.MapGet(
         "/servers/{serverId}/ws",
