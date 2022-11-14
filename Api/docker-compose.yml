@@ -12,6 +12,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      RATE_LIMIT_SECONDS: 0
 
   redis:
     image: redis

@@ -46,26 +46,22 @@ public class Database
             pixel.Color.ToString()
         );
         // ulong is currently not supported by redis.
-        Task<RedisResult> logTask1 = transaction.ExecuteAsync(
+        Task<RedisResult> logTask = transaction.ExecuteAsync(
             "BITFIELD",
             (RedisKey)GetLogKey(serverId),
             "SET",
             "u32",
-            $"#{offset}",
-            (uint)(userId >> 32)
-        );
-        Task<RedisResult> logTask2 = transaction.ExecuteAsync(
-            "BITFIELD",
-            (RedisKey)GetLogKey(serverId),
+            $"#{2 * offset}",
+            (uint)(userId >> 32),
             "SET",
             "u32",
-            $"#{offset + 1}",
+            $"#{2 * offset + 1}",
             (uint)(userId & 0xFFFFFFFF)
         );
 
         await transaction.ExecuteAsync();
 
-        await Task.WhenAll(colorTask, logTask1, logTask2);
+        await Task.WhenAll(colorTask, logTask);
 
         RedisChannel pubSubChannel = GetPubSubChannel(serverId);
         await database.PublishAsync(pubSubChannel, pixel.GetBytes());
@@ -76,30 +72,21 @@ public class Database
         IDatabase database = _redis.GetDatabase();
         int offset = y * Width + x;
 
-        ITransaction transaction = database.CreateTransaction();
-        Task<RedisResult> logTask1 = transaction.ExecuteAsync(
+        ulong[] result = (ulong[])(await database.ExecuteAsync(
             "BITFIELD",
             (RedisKey)GetLogKey(serverId),
             "GET",
             "u32",
-            $"#{offset}"
-        );
-        Task<RedisResult> logTask2 = transaction.ExecuteAsync(
-            "BITFIELD",
-            (RedisKey)GetLogKey(serverId),
+            $"#{2 * offset}",
             "GET",
             "u32",
-            $"#{offset + 1}"
-        );
-        await transaction.ExecuteAsync();
+            $"#{2 * offset + 1}"
+        ))!;
 
-        RedisResult[] logTasks = await Task.WhenAll(logTask1, logTask2);
-
-        ulong log1 = (ulong)logTasks[0];
-        ulong log2 = (ulong)logTasks[1];
-        ulong userId = (log1 << 32) + log2;
+        ulong userId = (result[0] << 32) + result[1];
 
         if (userId == 0) return null;
+
         return userId;
     }
 
