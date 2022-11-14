@@ -1,4 +1,5 @@
-﻿using StackExchange.Redis;
+﻿using System.Diagnostics;
+using StackExchange.Redis;
 
 namespace Api;
 
@@ -13,6 +14,14 @@ public class Database
         _redis = username is { } || password is { }
             ? ConnectionMultiplexer.Connect($"{username}:{password}@{hostname}:{port}")
             : ConnectionMultiplexer.Connect($"{hostname}:{port}");
+    }
+
+    uint[] BytesToUInts(byte[] bytes)
+    {
+        Debug.Assert(bytes.Length % 4 == 0);
+        uint[] result = new uint[bytes.Length / 4];
+        Buffer.BlockCopy(bytes, 0, result, 0, bytes.Length);
+        return result;
     }
 
     public async Task<byte[]> GetImage(ulong serverId)
@@ -37,25 +46,13 @@ public class Database
         string paletteKey = GetPaletteKey(serverId);
         RedisValue oldValue = await database.StringGetAsync(paletteKey);
 
-        byte[] val; 
-        uint[] palette;
-        if (oldValue.HasValue)
-        {
-            val = (byte[])oldValue.Box()!;
-            palette = new uint[val.Length / 4];
-            Buffer.BlockCopy(val, 0, palette, 0, val.Length);
-
-            return palette;
-        }
+        if (oldValue.HasValue) return BytesToUInts((byte[])oldValue.Box()!);
 
         await database.StringSetAsync(paletteKey, DefaultPalette);
-        
+
         RedisValue newValue = await database.StringGetAsync(paletteKey);
 
-        val = (byte[])newValue.Box()!;
-        palette = new uint[val.Length / 4];
-        Buffer.BlockCopy(val, 0, palette, 0, val.Length);
-        return palette;
+        return BytesToUInts((byte[])newValue.Box()!);
     }
 
     public async Task SetPixel(ulong serverId, ulong userId, Pixel pixel)
@@ -187,7 +184,11 @@ public class Database
     private static readonly byte[] DefaultImage = GetDefaultImage(Width, Height);
 
     private static readonly byte[] DefaultPalette =
-        new uint[] { 0xFFFFFF, 0, 0xFF0000, 0x00FF00, 0x0000FF, 0xFFFF00, 0xFF00FF, 0x00FFFF }
+        new uint[]
+            {
+                0xE4E4E4, 0xA0A7A7, 0x414141, 0x181414, 0x9E2B27, 0xEA7E35, 0xC2B51C, 0x39BA2E,
+                0x364B18, 0x6387D2, 0x267191, 0x253193, 0x7E34BF, 0xBE49C9, 0xD98199, 0x56331C
+            }
             .SelectMany(BitConverter.GetBytes).ToArray();
 
     private static byte[] GetDefaultImage(ushort width, ushort height)
