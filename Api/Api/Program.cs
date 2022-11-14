@@ -62,6 +62,10 @@ try
             {
                 return Results.Unauthorized();
             }
+            catch (RateLimitException)
+            {
+                return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+            }
         }
     );
 
@@ -89,6 +93,10 @@ try
             catch (UnauthorizedException)
             {
                 return Results.Unauthorized();
+            }
+            catch (RateLimitException)
+            {
+                return Results.StatusCode(StatusCodes.Status429TooManyRequests);
             }
         }
     );
@@ -161,6 +169,10 @@ try
             catch (UnauthorizedException)
             {
                 return Results.Unauthorized();
+            }
+            catch (RateLimitException)
+            {
+                return Results.StatusCode(StatusCodes.Status429TooManyRequests);
             }
         }
     );
